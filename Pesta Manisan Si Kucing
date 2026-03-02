@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <!-- Meta viewport sangat penting untuk mencegah zoom dan scroll tidak disengaja di HP saat bermain -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Food Catcher</title>
+    
+    <!-- Tailwind CSS untuk styling UI agar rapi dan cantik -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Font Google yang lucu dan membulat -->
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;600;800&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Baloo 2', cursive;
+            overflow: hidden; /* Mencegah scroll layar */
+            touch-action: none; /* Mencegah pull-to-refresh di mobile */
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        /* Animasi berkedip untuk judul */
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+        .animate-float {
+            animation: float 3s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-b from-pink-200 via-pink-100 to-rose-100 w-screen h-screen m-0 p-0 relative">
+
+    <!-- HUD (Heads Up Display) - Skor dan Nyawa (Disembunyikan saat layar awal) -->
+    <div id="hud" class="absolute top-4 left-4 right-4 flex justify-between items-center z-10 hidden pointer-events-none">
+        <div class="bg-white/80 backdrop-blur-md px-6 py-2 rounded-full shadow-md border-2 border-pink-300 text-pink-600 font-bold text-xl flex items-center gap-2">
+            ⭐ <span id="scoreDisplay">0</span>
+        </div>
+        <div class="bg-white/80 backdrop-blur-md px-6 py-2 rounded-full shadow-md border-2 border-pink-300 text-pink-600 font-bold text-xl flex items-center gap-2" id="livesDisplay">
+            💖💖💖
+        </div>
+    </div>
+
+    <!-- Layar Utama / Start Screen -->
+    <div id="startScreen" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-pink-100/90 backdrop-blur-sm px-4 text-center">
+        <div class="animate-float mb-4 text-7xl">🐱🎀</div>
+        <h1 class="text-4xl md:text-6xl font-extrabold text-pink-600 mb-4 drop-shadow-md border-white">
+            Pesta Manisan<br><span class="text-rose-400">Si Kucing</span>
+        </h1>
+        <p class="text-lg md:text-xl text-pink-800 font-semibold mb-8 max-w-md bg-white/60 p-4 rounded-3xl shadow-sm border border-pink-200">
+            Geser kucingmu untuk menangkap 🍰 🍬 🍓!<br>
+            Awas! Hindari 💣 ya!
+        </p>
+        <button id="startBtn" class="bg-gradient-to-r from-pink-400 to-rose-400 text-white text-2xl font-bold py-4 px-12 rounded-full shadow-lg border-4 border-white hover:scale-105 active:scale-95 transition-transform duration-200">
+            Mulai Main! ✨
+        </button>
+    </div>
+
+    <!-- Layar Game Over -->
+    <div id="gameOverScreen" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-pink-900/80 backdrop-blur-md px-4 text-center hidden">
+        <div class="text-7xl mb-4">😿💔</div>
+        <h1 class="text-5xl font-extrabold text-white mb-2 drop-shadow-lg">Yaah, Berakhir!</h1>
+        <p class="text-2xl text-pink-200 font-bold mb-8">
+            Skormu: <span id="finalScore" class="text-yellow-300 text-4xl">0</span> ⭐
+        </p>
+        <button id="restartBtn" class="bg-white text-pink-600 text-2xl font-bold py-4 px-12 rounded-full shadow-xl border-4 border-pink-300 hover:bg-pink-50 hover:scale-105 active:scale-95 transition-transform duration-200 flex items-center gap-2">
+            🔄 Main Lagi
+        </button>
+    </div>
+
+    <!-- Canvas Utama Game -->
+    <canvas id="gameCanvas" class="block w-full h-full absolute inset-0"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // UI Elements
+        const startScreen = document.getElementById('startScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const hud = document.getElementById('hud');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const livesDisplay = document.getElementById('livesDisplay');
+        const finalScore = document.getElementById('finalScore');
+        const startBtn = document.getElementById('startBtn');
+        const restartBtn = document.getElementById('restartBtn');
+
+        // Game Configuration & State
+        let animationId;
+        let isPlaying = false;
+        let score = 0;
+        let lives = 3;
+        let frameCount = 0;
+        
+        let canvasW, canvasH;
+
+        // Emojis
+        const CATCHER_EMOJI = '🐱';
+        const GOOD_ITEMS = ['🍰', '🍬', '🍓', '🍩', '🧁', '🍪'];
+        const BAD_ITEMS = ['💣', '🕷️'];
+        const SPECIAL_ITEMS = ['⭐', '💖'];
+
+        // Entities arrays
+        let items = [];
+        let particles = [];
+
+        // Player (Catcher) Object
+        const player = {
+            x: 0,
+            y: 0,
+            size: 60, // Lebar tangkapan
+            targetX: 0
+        };
+
+        // Resize Canvas function
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            canvasW = canvas.width;
+            canvasH = canvas.height;
+            
+            // Posisi awal player di bawah tengah
+            player.y = canvasH - player.size - 40;
+            if (!isPlaying) {
+                player.x = canvasW / 2;
+                player.targetX = canvasW / 2;
+            }
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Input Handling (Mouse & Touch)
+        function updatePlayerPosition(clientX) {
+            // Batasi agar tidak keluar layar
+            let newX = clientX;
+            if (newX < player.size / 2) newX = player.size / 2;
+            if (newX > canvasW - player.size / 2) newX = canvasW - player.size / 2;
+            player.targetX = newX;
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isPlaying) updatePlayerPosition(e.clientX);
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (isPlaying) {
+                e.preventDefault(); // Mencegah scrolling
+                updatePlayerPosition(e.touches[0].clientX);
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchstart', (e) => {
+            if (isPlaying) updatePlayerPosition(e.touches[0].clientX);
+        }, { passive: true });
+
+        // Item Class (Barang yang jatuh)
+        class Item {
+            constructor() {
+                this.size = Math.random() * 20 + 30; // 30 - 50 px
+                this.x = Math.random() * (canvasW - this.size * 2) + this.size;
+                this.y = -this.size;
+                
+                // Tentukan jenis item
+                const rand = Math.random();
+                if (rand < 0.15) { // 15% kesempatan barang buruk
+                    this.emoji = BAD_ITEMS[Math.floor(Math.random() * BAD_ITEMS.length)];
+                    this.type = 'bad';
+                } else if (rand > 0.95) { // 5% kesempatan barang super
+                    this.emoji = SPECIAL_ITEMS[Math.floor(Math.random() * SPECIAL_ITEMS.length)];
+                    this.type = 'special';
+                } else {
+                    this.emoji = GOOD_ITEMS[Math.floor(Math.random() * GOOD_ITEMS.length)];
+                    this.type = 'good';
+                }
+
+                // Kecepatan jatuh (makin tinggi skor, makin cepat)
+                const baseSpeed = (canvasH / 300) + (score * 0.05); 
+                this.speed = baseSpeed + Math.random() * 2;
+                
+                // Efek bergoyang
+                this.wobble = Math.random() * Math.PI * 2;
+                this.wobbleSpeed = Math.random() * 0.1;
+            }
+
+            update() {
+                this.y += this.speed;
+                this.wobble += this.wobbleSpeed;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.font = `${this.size}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Tambahkan efek goyang horizontal sedikit
+                const drawX = this.x + Math.sin(this.wobble) * 10;
+                ctx.fillText(this.emoji, drawX, this.y);
+                ctx.restore();
+            }
+        }
+
+        // Particle Class (Efek saat ditangkap)
+        class Particle {
+            constructor(x, y, text, color) {
+                this.x = x;
+                this.y = y;
+                this.text = text;
+                this.color = color;
+                this.life = 1.0; // 100%
+                this.velocity = -2 - Math.random() * 2; // Bergerak ke atas
+            }
+
+            update() {
+                this.y += this.velocity;
+                this.life -= 0.03;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, this.life);
+                ctx.font = 'bold 24px "Baloo 2", cursive';
+                ctx.fillStyle = this.color;
+                ctx.textAlign = 'center';
+                // Memberikan efek stroke (garis luar) putih
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 3;
+                ctx.strokeText(this.text, this.x, this.y);
+                ctx.fillText(this.text, this.x, this.y);
+                ctx.restore();
+            }
+        }
+
+        function createParticles(x, y, type) {
+            let text, color;
+            if (type === 'good') {
+                text = '+10';
+                color = '#ec4899'; // pink-500
+            } else if (type === 'bad') {
+                text = 'Oops!';
+                color = '#ef4444'; // red-500
+            } else {
+                text = '+50';
+                color = '#eab308'; // yellow-500
+            }
+            particles.push(new Particle(x, y, text, color));
+        }
+
+        // Fungsi Utama Game Loop
+        function update() {
+            if (!isPlaying) return;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvasW, canvasH);
+
+            // Pergerakan pemain (Smooth follow)
+            player.x += (player.targetX - player.x) * 0.2;
+
+            // Gambar Keranjang Pemain
+            ctx.save();
+            ctx.font = `${player.size * 1.5}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Efek bayangan pada keranjang
+            ctx.shadowColor = 'rgba(236, 72, 153, 0.4)'; // pink shadow
+            ctx.shadowBlur = 15;
+            ctx.shadowOffsetY = 10;
+            
+            // Menambahkan mangkuk setengah lingkaran di belakang kucing (opsional, agar terlihat seperti wadah)
+            ctx.beginPath();
+            ctx.arc(player.x, player.y + 10, player.size * 0.7, 0, Math.PI, false);
+            ctx.fillStyle = '#fce7f3'; // pink-100
+            ctx.fill();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#fbcfe8'; // pink-200
+            ctx.stroke();
+
+            // Gambar Kucing
+            ctx.fillText(CATCHER_EMOJI, player.x, player.y);
+            ctx.restore();
+
+            // Spawning Items
+            // Makin tinggi skor, makin cepat munculnya
+            const spawnRate = Math.max(20, 60 - Math.floor(score / 50));
+            if (frameCount % spawnRate === 0) {
+                items.push(new Item());
+            }
+
+            // Update & Gambar Items
+            for (let i = items.length - 1; i >= 0; i--) {
+                const item = items[i];
+                item.update();
+                item.draw();
+
+                // Deteksi Tabrakan (AABB Collision sederhana melingkar)
+                const dx = item.x - player.x;
+                const dy = item.y - player.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < (player.size * 0.7 + item.size * 0.4)) {
+                    // Terjadi Tabrakan
+                    if (item.type === 'good') {
+                        score += 10;
+                        createParticles(item.x, item.y, 'good');
+                    } else if (item.type === 'special') {
+                        score += 50;
+                        if (item.emoji === '💖' && lives < 5) {
+                            lives++;
+                            updateLivesDisplay();
+                        }
+                        createParticles(item.x, item.y, 'special');
+                    } else if (item.type === 'bad') {
+                        lives--;
+                        updateLivesDisplay();
+                        createParticles(item.x, item.y, 'bad');
+                        
+                        // Efek layar merah sejenak
+                        ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+                        ctx.fillRect(0, 0, canvasW, canvasH);
+                    }
+
+                    scoreDisplay.innerText = score;
+                    items.splice(i, 1);
+
+                    // Cek Game Over
+                    if (lives <= 0) {
+                        endGame();
+                    }
+                    continue; // Skip pengecekan keluar layar jika sudah tertangkap
+                }
+
+                // Hapus item yang lewat batas bawah
+                if (item.y > canvasH + item.size) {
+                    items.splice(i, 1);
+                }
+            }
+
+            // Update & Gambar Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.update();
+                p.draw();
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+
+            frameCount++;
+            animationId = requestAnimationFrame(update);
+        }
+
+        // Fungsi memperbarui UI Nyawa
+        function updateLivesDisplay() {
+            let hearts = '';
+            for(let i=0; i<lives; i++) hearts += '💖';
+            livesDisplay.innerText = hearts;
+        }
+
+        // Mulai Game
+        function startGame() {
+            isPlaying = true;
+            score = 0;
+            lives = 3;
+            items = [];
+            particles = [];
+            frameCount = 0;
+            scoreDisplay.innerText = score;
+            updateLivesDisplay();
+            
+            // Atur posisi awal keranjang ke tengah
+            player.x = canvasW / 2;
+            player.targetX = canvasW / 2;
+
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            hud.classList.remove('hidden');
+
+            resizeCanvas(); // Pastikan ukuran canvas pas
+            update(); // Jalankan loop game
+        }
+
+        // Akhiri Game
+        function endGame() {
+            isPlaying = false;
+            cancelAnimationFrame(animationId);
+            hud.classList.add('hidden');
+            gameOverScreen.classList.remove('hidden');
+            finalScore.innerText = score;
+        }
+
+        // Event Listeners Buttons
+        startBtn.addEventListener('click', startGame);
+        restartBtn.addEventListener('click', startGame);
+
+        // Pre-render latar belakang di frame pertama agar tidak kosong saat layar awal
+        ctx.fillStyle = 'rgba(255, 255, 255, 0)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    </script>
+</body>
+</html>
